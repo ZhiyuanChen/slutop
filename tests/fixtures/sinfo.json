@@ -1,0 +1,68 @@
+{
+  "meta": {
+    "plugin": { "type": "openapi/v0.0.37", "name": "Slurm OpenAPI v0.0.37" }
+  },
+  "errors": [],
+  "nodes": [
+    {
+      "name": "node1",
+      "partitions": ["gpu"],
+      "state": "allocated",
+      "cpus": 128,
+      "alloc_cpus": 128,
+      "idle_cpus": 0,
+      "real_memory": 1031898,
+      "alloc_memory": 1031898,
+      "free_memory": 4096,
+      "gres": "gpu:8",
+      "gres_used": "gpu:8",
+      "tres": "cpu=128,mem=1031898M,billing=128,gres/gpu=8",
+      "tres_used": "cpu=128,mem=1007G,gres/gpu=8"
+    },
+    {
+      "name": "node2",
+      "partitions": ["gpu"],
+      "state": "mixed",
+      "cpus": 128,
+      "alloc_cpus": 48,
+      "idle_cpus": 80,
+      "real_memory": 1031898,
+      "alloc_memory": 528384,
+      "free_memory": 29291,
+      "gres": "gpu:8",
+      "gres_used": "gpu:5",
+      "tres": "cpu=128,mem=1031898M,billing=128,gres/gpu=8",
+      "tres_used": "cpu=48,mem=516G,gres/gpu=5"
+    },
+    {
+      "name": "node3",
+      "partitions": ["gpu", "debug"],
+      "state": "idle",
+      "cpus": 128,
+      "alloc_cpus": 0,
+      "idle_cpus": 128,
+      "real_memory": 1031898,
+      "alloc_memory": 0,
+      "free_memory": 1000000,
+      "gres": "gpu:a100:8",
+      "gres_used": "gpu:0",
+      "tres": "cpu=128,mem=1031898M,billing=128,gres/gpu=8",
+      "tres_used": ""
+    },
+    {
+      "name": "node4",
+      "partitions": ["gpu"],
+      "state": "down",
+      "cpus": 128,
+      "alloc_cpus": 0,
+      "idle_cpus": 128,
+      "real_memory": 1031898,
+      "alloc_memory": 0,
+      "free_memory": 0,
+      "gres": "gpu:8",
+      "gres_used": "gpu:0",
+      "tres": "cpu=128,mem=1031898M,billing=128,gres/gpu=8",
+      "tres_used": ""
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "meta": {
+    "plugin": { "type": "openapi/v0.0.37", "name": "Slurm OpenAPI v0.0.37" }
+  },
+  "errors": [],
+  "jobs": [
+    {
+      "job_id": 1001,
+      "name": "train_model",
+      "user_name": "",
+      "account": "lab",
+      "partition": "gpu",
+      "job_state": "RUNNING",
+      "state_reason": "None",
+      "nodes": "node[1-2]",
+      "node_count": 2,
+      "cpus": 96,
+      "tres_req_str": "cpu=96,mem=1032G,node=2,billing=96,gres/gpu=11",
+      "tres_alloc_str": "cpu=96,mem=1032G,node=2,billing=96,gres/gpu=11",
+      "start_time": 1781694640,
+      "end_time": 1813230640,
+      "time_limit": null,
+      "gres_detail": ["gpu:8(IDX:0-7)", "gpu:3(IDX:0-2)"]
+    },
+    {
+      "job_id": 1002,
+      "name": "big_sweep",
+      "user_name": "",
+      "account": "lab",
+      "partition": "gpu",
+      "job_state": "PENDING",
+      "state_reason": "Resources",
+      "nodes": "",
+      "node_count": 4,
+      "cpus": 512,
+      "tres_req_str": "cpu=512,mem=4T,node=4,billing=512,gres/gpu=32",
+      "tres_alloc_str": "",
+      "start_time": 0,
+      "end_time": 0,
+      "time_limit": 1440,
+      "gres_detail": []
+    }
+  ]
+}

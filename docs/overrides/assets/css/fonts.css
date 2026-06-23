@@ -1,0 +1,8 @@
+/* Latin text and code are loaded from Google Fonts via the Material `font`
+   setting (Noto Sans / Noto Sans Mono). Noto Sans SC adds CJK coverage. */
+@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&display=swap");
+
+:root {
+  --md-text-font: "Noto Sans", "Noto Sans SC";
+  --md-code-font: "Noto Sans Mono", "Noto Sans SC";
+}
