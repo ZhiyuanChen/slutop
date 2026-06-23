@@ -20,6 +20,18 @@ These are deliberately decoupled from how the data is fetched: a :class:`Node`
 or :class:`Job` is built from a :class:`~chanfig.NestedDict` (parsed Slurm JSON)
 via the ``from_*`` constructors, so the rest of slutop never touches raw Slurm
 output formats.
+
+Slurm's JSON schema differs across ``data_parser`` versions, and the ``from_*``
+constructors absorb those differences so the rest of the codebase sees one stable
+shape. The two families seen in the wild:
+
+* flat (``v0.0.37``, Slurm <=21.08): scalars are plain (``"cpus": 128``) and
+  states are single strings (``"state": "mixed"``);
+* structured (``v0.0.4x``, Slurm >=24): numbers are wrapped objects
+  (``{"set","infinite","number"}``) and states are flag lists (``["MIXED"]``).
+
+The small adaptation helpers below (:func:`_unwrap`, :func:`_state_str`) normalise
+both forms; to support a new field, read it through them in the ``from_*`` method.
 """
 
 from __future__ import annotations
@@ -44,7 +56,26 @@ _UNUSABLE_STATES = (
 )
 
 
+# -- Slurm schema adaptation: normalise flat (v0.0.37) and structured (v0.0.4x) forms --
+
+
+def _unwrap(value: object) -> object:
+    """Unwrap the Slurm >=24 data_parser number form ``{"set","infinite","number"}``.
+
+    Returns ``None`` for unset/infinite values; otherwise the plain number.
+    Plain scalars (older flat parsers like v0.0.37) pass through unchanged.
+    """
+    if isinstance(value, dict) and "number" in value:
+        if value.get("infinite") or not value.get("set", True):
+            return None
+        return value.get("number")
+    return value
+
+
 def _as_int(value: object, default: int = 0) -> int:
+    value = _unwrap(value)
+    if isinstance(value, bool):
+        return default
     if isinstance(value, (int, float)):
         return int(value)
     if isinstance(value, str):
@@ -58,6 +89,17 @@ def _as_int(value: object, default: int = 0) -> int:
 def _epoch_or_none(value: object) -> int | None:
     n = _as_int(value, 0)
     return n or None
+
+
+def _state_str(value: object) -> str:
+    """Normalise a Slurm state to a string.
+
+    Slurm <=21.08 reports a single string (``"mixed"``); Slurm >=24 reports a
+    list of flags (``["MIXED"]`` / ``["DOWN", "DRAIN"]``).
+    """
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(flag) for flag in value)
+    return str(value or "")
 
 
 @dataclass
@@ -99,8 +141,8 @@ class Node:
         return self.usable and self.gpus_free > 0
 
     @classmethod
-    def from_sinfo(cls, node: NestedDict) -> Node:
-        """Build a :class:`Node` from one entry of ``sinfo --json``."""
+    def from_node(cls, node: NestedDict) -> Node:
+        """Build a :class:`Node` from one ``scontrol show node --json`` / ``sinfo --json`` entry."""
         tres = parse_tres(node.get("tres"))
         used = parse_tres(node.get("tres_used"))
         gpus_total = _as_int(tres.get("gpu")) or _as_int(parse_gres(node.get("gres")).get("gpu"))
@@ -108,7 +150,7 @@ class Node:
         return cls(
             name=node.get("name", ""),
             partitions=list(node.get("partitions") or []),
-            state=str(node.get("state", "")),
+            state=_state_str(node.get("state")),
             cpus_total=_as_int(node.get("cpus")),
             cpus_alloc=_as_int(node.get("alloc_cpus")),
             mem_total=float(_as_int(node.get("real_memory"))),
@@ -158,7 +200,7 @@ class Job:
             user=job.get("user_name", "") or "",
             account=job.get("account", "") or "",
             partition=job.get("partition", "") or "",
-            state=str(job.get("job_state", "")),
+            state=_state_str(job.get("job_state")),
             reason=job.get("state_reason", "") or "",
             nodes=job.get("nodes", "") or "",
             node_count=_as_int(job.get("node_count")),

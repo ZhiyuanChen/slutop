@@ -1,0 +1,44 @@
+{
+  "meta": { "plugin": { "data_parser": "data_parser/v0.0.44" } },
+  "nodes": [
+    {
+      "name": "compute-0001",
+      "partitions": ["gpu"],
+      "state": ["MIXED"],
+      "cpus": 128,
+      "alloc_cpus": 64,
+      "real_memory": 2000000,
+      "alloc_memory": 819200,
+      "gres": "gpu:a800:8",
+      "gres_used": "gpu:a800:8(IDX:0-7)",
+      "tres": "cpu=128,mem=2000000M,billing=128,gres/gpu=8",
+      "tres_used": "cpu=64,mem=800G,gres/gpu=8"
+    },
+    {
+      "name": "compute-0002",
+      "partitions": ["gpu"],
+      "state": ["IDLE"],
+      "cpus": 128,
+      "alloc_cpus": 0,
+      "real_memory": 2000000,
+      "alloc_memory": 0,
+      "gres": "gpu:a800:8",
+      "gres_used": "gpu:a800:0",
+      "tres": "cpu=128,mem=2000000M,billing=128,gres/gpu=8",
+      "tres_used": ""
+    },
+    {
+      "name": "compute-0003",
+      "partitions": ["gpu"],
+      "state": ["DOWN", "DRAIN"],
+      "cpus": 128,
+      "alloc_cpus": 0,
+      "real_memory": 2000000,
+      "alloc_memory": 0,
+      "gres": "gpu:a800:8",
+      "gres_used": "gpu:a800:0",
+      "tres": "cpu=128,mem=2000000M,billing=128,gres/gpu=8",
+      "tres_used": ""
+    }
+  ]
+}

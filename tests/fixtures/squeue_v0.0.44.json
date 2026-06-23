@@ -1,0 +1,39 @@
+{
+  "meta": { "plugin": { "data_parser": "data_parser/v0.0.44" } },
+  "jobs": [
+    {
+      "job_id": 109,
+      "name": "train",
+      "user_name": "alice",
+      "account": "lab",
+      "partition": "gpu",
+      "job_state": ["RUNNING"],
+      "state_reason": "None",
+      "nodes": "compute-[0001-0002]",
+      "node_count": { "set": true, "infinite": false, "number": 2 },
+      "cpus": { "set": true, "infinite": false, "number": 48 },
+      "tres_req_str": "cpu=48,mem=1000G,node=2,billing=48,gres/gpu=16",
+      "tres_alloc_str": "cpu=48,mem=1000G,node=2,billing=48,gres/gpu=16",
+      "start_time": { "set": true, "infinite": false, "number": 1782239747 },
+      "end_time": { "set": true, "infinite": false, "number": 1782239867 },
+      "time_limit": { "set": true, "infinite": false, "number": 60 }
+    },
+    {
+      "job_id": 110,
+      "name": "sweep",
+      "user_name": "bob",
+      "account": "lab",
+      "partition": "gpu",
+      "job_state": ["PENDING"],
+      "state_reason": "Resources",
+      "nodes": "",
+      "node_count": { "set": true, "infinite": false, "number": 24 },
+      "cpus": { "set": true, "infinite": false, "number": 24 },
+      "tres_req_str": "cpu=24,mem=6000000M,node=24,billing=24,gres/gpu=24",
+      "tres_alloc_str": "",
+      "start_time": { "set": true, "infinite": false, "number": 0 },
+      "end_time": { "set": true, "infinite": false, "number": 0 },
+      "time_limit": { "set": false, "infinite": true, "number": 0 }
+    }
+  ]
+}

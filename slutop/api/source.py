@@ -34,7 +34,12 @@ from .models import Job, Node
 
 
 class Source:
-    """Abstract provider of cluster state."""
+    """Abstract provider of cluster state.
+
+    New backends (e.g. a ``slurmrestd`` REST source, or an optional accelerated
+    one) only need to implement :meth:`nodes` and :meth:`jobs`, returning the
+    typed models; everything downstream is source-agnostic.
+    """
 
     def nodes(self) -> list[Node]:
         raise NotImplementedError
@@ -44,38 +49,47 @@ class Source:
 
 
 class CliSource(Source):
-    """Read cluster state from the Slurm CLI (``sinfo``, ``squeue``)."""
+    """Read cluster state from the Slurm CLI (``scontrol``, ``sinfo``, ``squeue``)."""
+
+    # Node sources in preference order. ``scontrol show node --json`` returns a
+    # clean per-node ``nodes`` list on Slurm >=23.02; ``sinfo --json`` carries a
+    # flat ``nodes`` list on Slurm <=21.08 (on newer Slurm its top-level key is
+    # ``sinfo`` partition/state groups, which have no ``nodes`` list, so we skip).
+    _NODE_COMMANDS = (
+        ("scontrol", "show", "node", "--json"),
+        ("sinfo", "--json"),
+    )
 
     def __init__(self, timeout: float = 15.0) -> None:
         self.timeout = timeout
-        # Per-binary memo of whether ``--json`` is supported (None = untested).
-        self._json_ok: dict[str, bool | None] = {}
+        self._node_command: tuple[str, ...] | None = None  # memo of the working node command
 
     def _run(self, *cmd: str) -> str:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout, check=True)  # noqa: S603
         return result.stdout
 
-    def _json(self, binary: str, *args: str) -> NestedDict | None:
-        """Run ``<binary> --json <args>`` and parse it, or return ``None`` if unsupported."""
-        if self._json_ok.get(binary) is False:
-            return None
+    def _json(self, *cmd: str) -> NestedDict | None:
+        """Run a command and parse its JSON stdout, or return ``None`` if it fails."""
         try:
-            out = self._run(binary, "--json", *args)
-        except subprocess.CalledProcessError:
-            # e.g. "unrecognized option '--json'" on older Slurm.
-            self._json_ok[binary] = False
+            out = self._run(*cmd)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+            return None  # e.g. "unrecognized option '--json'" on older Slurm
+        try:
+            return NestedDict.from_jsons(out)
+        except (ValueError, TypeError):
             return None
-        self._json_ok[binary] = True
-        return NestedDict.from_jsons(out)
 
     def nodes(self) -> list[Node]:
-        data = self._json("sinfo")
-        if data is not None:
-            return [Node.from_sinfo(n) for n in data.get("nodes") or []]
+        commands = (self._node_command,) if self._node_command else self._NODE_COMMANDS
+        for cmd in commands:
+            data = self._json(*cmd)
+            if data is not None and data.get("nodes"):
+                self._node_command = cmd
+                return [Node.from_node(n) for n in data["nodes"]]
         return self._nodes_text()
 
     def jobs(self) -> list[Job]:
-        data = self._json("squeue")
+        data = self._json("squeue", "--json")
         if data is not None:
             jobs = [Job.from_squeue(j) for j in data.get("jobs") or []]
             self._patch_usernames(jobs)
@@ -105,26 +119,31 @@ class CliSource(Source):
                 job.user = mapping[job.job_id]
 
     # -- Text/format fallbacks for Slurm builds without --json -----------------
-    # Implemented lazily: the JSON path covers Slurm >= 20.11 for sinfo/squeue,
-    # which is the overwhelming majority of live clusters. The hooks exist so the
-    # fallback can be added without touching the rest of the codebase.
+    # Implemented lazily: the JSON path covers Slurm >= 20.11 (sinfo/squeue) and
+    # the structured v0.0.4x parsers via scontrol, i.e. the overwhelming majority
+    # of live clusters. The hooks exist so the fallback can be added without
+    # touching the rest of the codebase.
 
     def _nodes_text(self) -> list[Node]:
-        raise NotImplementedError("sinfo --json is unavailable and the text fallback is not implemented yet")
+        raise NotImplementedError("no JSON node source available and the text fallback is not implemented yet")
 
     def _jobs_text(self) -> list[Job]:
         raise NotImplementedError("squeue --json is unavailable and the text fallback is not implemented yet")
 
 
 class JsonSource(Source):
-    """A source backed by pre-captured ``sinfo``/``squeue`` JSON (for tests/replay)."""
+    """A source backed by pre-captured node/job JSON (for tests/replay).
 
-    def __init__(self, sinfo: str, squeue: str) -> None:
-        self._sinfo = NestedDict.from_jsons(sinfo)
-        self._squeue = NestedDict.from_jsons(squeue)
+    ``nodes`` accepts any payload with a top-level ``nodes`` list (``sinfo --json``
+    on Slurm <=21.08 or ``scontrol show node --json`` on newer Slurm).
+    """
+
+    def __init__(self, nodes: str, jobs: str) -> None:
+        self._nodes = NestedDict.from_jsons(nodes)
+        self._jobs = NestedDict.from_jsons(jobs)
 
     def nodes(self) -> list[Node]:
-        return [Node.from_sinfo(n) for n in self._sinfo.get("nodes") or []]
+        return [Node.from_node(n) for n in self._nodes.get("nodes") or []]
 
     def jobs(self) -> list[Job]:
-        return [Job.from_squeue(j) for j in self._squeue.get("jobs") or []]
+        return [Job.from_squeue(j) for j in self._jobs.get("jobs") or []]

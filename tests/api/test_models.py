@@ -1,8 +1,57 @@
 from slutop.api import Cluster
+from slutop.api.models import _state_str, _unwrap
 
 
 def _node(cluster: Cluster, name: str):
     return next(n for n in cluster.nodes if n.name == name)
+
+
+# -- Slurm 25.11 (data_parser/v0.0.44) schema handling ------------------------
+
+
+def test_unwrap_number_form():
+    assert _unwrap({"set": True, "infinite": False, "number": 48}) == 48
+    assert _unwrap({"set": False, "infinite": False, "number": 0}) is None  # unset
+    assert _unwrap({"set": True, "infinite": True, "number": 0}) is None  # infinite
+    assert _unwrap(7) == 7  # flat v0.0.37 passes through
+    assert _unwrap("gpu:8") == "gpu:8"
+
+
+def test_state_str_handles_list_and_string():
+    assert _state_str(["MIXED"]) == "MIXED"
+    assert _state_str(["DOWN", "DRAIN"]) == "DOWN DRAIN"
+    assert _state_str("mixed") == "mixed"  # v0.0.37 single string
+    assert _state_str(None) == ""
+
+
+def test_v44_node_parsing(cluster_v44: Cluster):
+    busy = _node(cluster_v44, "compute-0001")
+    assert (busy.cpus_total, busy.cpus_alloc) == (128, 64)  # plain ints
+    assert (busy.gpus_total, busy.gpus_used, busy.gpus_free) == (8, 8, 0)
+    assert busy.state == "MIXED"  # list -> string
+    assert busy.usable and not busy.available
+
+    idle = _node(cluster_v44, "compute-0002")
+    assert idle.gpus_free == 8 and idle.available
+
+    down = _node(cluster_v44, "compute-0003")  # state ["DOWN", "DRAIN"]
+    assert down.usable is False and down.available is False
+
+
+def test_v44_job_parsing(cluster_v44: Cluster):
+    jobs = {j.job_id: j for j in cluster_v44.jobs}
+    run = jobs[109]
+    assert run.running is True
+    assert run.cpus == 48 and run.node_count == 2  # {set,infinite,number} unwrapped
+    assert run.gpus == 16  # from tres_alloc_str
+    assert run.start_time == 1782239747
+
+    pend = jobs[110]
+    assert pend.pending is True  # job_state ["PENDING"]
+    assert pend.gpus == 24  # falls back to tres_req_str when alloc is empty
+    assert pend.cpus == 24
+    assert pend.time_limit is None  # infinite -> None
+    assert pend.reason == "Resources"
 
 
 def test_node_gpu_accounting(cluster: Cluster):
