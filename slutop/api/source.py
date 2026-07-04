@@ -91,32 +91,8 @@ class CliSource(Source):
     def jobs(self) -> list[Job]:
         data = self._json("squeue", "--json")
         if data is not None:
-            jobs = [Job.from_squeue(j) for j in data.get("jobs") or []]
-            self._patch_usernames(jobs)
-            return jobs
+            return [Job.from_squeue(j) for j in data.get("jobs") or []]
         return self._jobs_text()
-
-    def _patch_usernames(self, jobs: list[Job]) -> None:
-        """Backfill usernames left empty by ``squeue --json`` (a 21.08 quirk).
-
-        This is the JSON-with-text-fallback pattern in miniature: the structured
-        output is missing a field, so we top it up from a parseable format query.
-        """
-        if not any(not job.user for job in jobs):
-            return
-        try:
-            out = self._run("squeue", "-h", "-a", "-o", "%i|%u")
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-            return
-        mapping: dict[int, str] = {}
-        for line in out.splitlines():
-            jid, _, user = line.partition("|")
-            jid = jid.strip()
-            if jid.isdigit():
-                mapping[int(jid)] = user.strip()
-        for job in jobs:
-            if not job.user and job.job_id in mapping:
-                job.user = mapping[job.job_id]
 
     # -- Text/format fallbacks for Slurm builds without --json -----------------
     # Implemented lazily: the JSON path covers Slurm >= 20.11 (sinfo/squeue) and

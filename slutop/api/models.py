@@ -36,6 +36,7 @@ both forms; to support a new field, read it through them in the ``from_*`` metho
 
 from __future__ import annotations
 
+import pwd
 from dataclasses import dataclass, field
 
 from chanfig import NestedDict
@@ -100,6 +101,30 @@ def _state_str(value: object) -> str:
     if isinstance(value, (list, tuple)):
         return " ".join(str(flag) for flag in value)
     return str(value or "")
+
+
+_UID_NAMES: dict[int, str] = {}  # cache uid -> name
+
+
+def _username(name: object, uid: object) -> str:
+    """Resolve a job's owner.
+
+    Prefer the reported ``user_name``; Slurm <=21.08 leaves it empty but still
+    reports ``user_id``, so fall back to the local user database (the same one
+    that resolves names elsewhere on a login node). Unresolvable UIDs show as the
+    bare number rather than being lost.
+    """
+    if name:
+        return str(name)
+    uid = _as_int(uid, -1)
+    if uid < 0:
+        return ""
+    if uid not in _UID_NAMES:
+        try:
+            _UID_NAMES[uid] = pwd.getpwuid(uid).pw_name
+        except KeyError:
+            _UID_NAMES[uid] = str(uid)
+    return _UID_NAMES[uid]
 
 
 @dataclass
@@ -197,7 +222,7 @@ class Job:
         return cls(
             job_id=_as_int(job.get("job_id")),
             name=job.get("name", "") or "",
-            user=job.get("user_name", "") or "",
+            user=_username(job.get("user_name"), job.get("user_id")),
             account=job.get("account", "") or "",
             partition=job.get("partition", "") or "",
             state=_state_str(job.get("job_state")),
