@@ -38,13 +38,20 @@ from chanfig import Config, NestedDict
 from rich.console import Console
 
 from . import __version__
-from .api import CliSource, Cluster, History, Node, Source, snapshot
+from .api import (
+    ACTIVE_REFRESH_INTERVAL,
+    IDLE_REFRESH_INTERVAL,
+    NODE_REFRESH_INTERVAL,
+    CachedCollector,
+    CliSource,
+    Cluster,
+    History,
+    Source,
+    filter_cluster,
+    snapshot,
+)
 from .tui.render import build_view, render_snapshot
 
-ACTIVE_REFRESH_INTERVAL = 2.0
-IDLE_REFRESH_INTERVAL = 5.0
-NODE_REFRESH_INTERVAL = 30.0
-MIN_REFRESH_INTERVAL = 0.1
 INPUT_TICK_INTERVAL = 0.25
 
 
@@ -85,18 +92,6 @@ def build_config(argv: list[str] | None = None) -> Config:
     return Config(**vars(args))
 
 
-def _filter_cluster(cluster: Cluster, user: str | None, partition: str | None) -> Cluster:
-    if partition:
-        cluster.nodes = [n for n in cluster.nodes if partition in n.partitions]
-    jobs = cluster.jobs
-    if user:
-        jobs = [j for j in jobs if j.user == user]
-    if partition:
-        jobs = [j for j in jobs if j.partition == partition]
-    cluster.jobs = jobs
-    return cluster
-
-
 def _payload(cluster: Cluster) -> NestedDict:
     """Serialise a snapshot into a chanfig NestedDict for JSON output."""
     return NestedDict(
@@ -123,67 +118,7 @@ def _now() -> str:
 
 
 def _collect(source: Source, config: Config, user: str | None) -> Cluster:
-    return _filter_cluster(snapshot(source), user, config.partition)
-
-
-def _job_signature(cluster: Cluster) -> tuple:
-    return tuple(
-        (
-            job.job_id,
-            job.partition,
-            job.state,
-            job.reason,
-            job.nodes,
-            job.node_count,
-            job.cpus,
-            job.gpus,
-            job.start_time,
-            job.end_time,
-        )
-        for job in sorted(cluster.jobs, key=lambda j: j.job_id)
-    )
-
-
-def _bounded_interval(value: float, minimum: float = MIN_REFRESH_INTERVAL) -> float:
-    return max(float(value), minimum)
-
-
-class CachedCollector:
-    """Collect jobs frequently while caching node snapshots between slower refreshes."""
-
-    def __init__(self, source: Source, node_interval: float, clock=time.monotonic) -> None:
-        self.source = source
-        self.node_interval = _bounded_interval(node_interval)
-        self.clock = clock
-        self._nodes: list[Node] | None = None
-        self._nodes_at = float("-inf")
-        self._signature: tuple | None = None
-        self.stable_refreshes = 0
-        self.changed = True
-
-    def collect(self, config: Config, user: str | None) -> Cluster:
-        now = self.clock()
-        jobs = self.source.jobs()
-        cluster = Cluster(nodes=[], jobs=jobs)
-        signature = _job_signature(cluster)
-        self.changed = signature != self._signature
-        self.stable_refreshes = 0 if self.changed else self.stable_refreshes + 1
-        self._signature = signature
-
-        nodes_due = self._nodes is None or self.changed or now - self._nodes_at >= self.node_interval
-        if nodes_due:
-            self._nodes = self.source.nodes()
-            self._nodes_at = now
-
-        assert self._nodes is not None
-        return _filter_cluster(Cluster(nodes=list(self._nodes), jobs=jobs), user, config.partition)
-
-    def next_interval(self, config: Config, cluster: Cluster) -> float:
-        active = _bounded_interval(config.interval)
-        idle = max(active, _bounded_interval(config.idle_interval))
-        if self.changed or cluster.pending_jobs or self.stable_refreshes < 2:
-            return active
-        return idle
+    return filter_cluster(snapshot(source), user, config.partition)
 
 
 @contextlib.contextmanager
@@ -228,13 +163,23 @@ def _monitor(source: Source, config: Config, me: str | None, user: str | None) -
             try:
                 now = time.monotonic()
                 if now >= next_collect:
-                    cluster = collector.collect(config, user)
+                    cluster = collector.collect(user, config.partition)
                     history.update(cluster)
                     live.update(
-                        build_view(cluster, me=me, partition=config.partition, timestamp=_now(), history=history),
+                        build_view(
+                            cluster,
+                            me=me,
+                            partition=config.partition,
+                            timestamp=_now(),
+                            history=history,
+                        ),
                         refresh=True,
                     )
-                    next_collect = time.monotonic() + collector.next_interval(config, cluster)
+                    next_collect = time.monotonic() + collector.next_interval(
+                        config.interval,
+                        config.idle_interval,
+                        cluster,
+                    )
                 timeout = min(INPUT_TICK_INTERVAL, max(next_collect - time.monotonic(), 0.0))
                 key = read_key(timeout)
             except KeyboardInterrupt:  # Ctrl-C
