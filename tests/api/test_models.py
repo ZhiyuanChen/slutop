@@ -1,5 +1,7 @@
+from chanfig import NestedDict
+
 from slutop.api import Cluster, models
-from slutop.api.models import _state_str, _unwrap, _username
+from slutop.api.models import Job, _state_str, _unwrap, _username
 
 
 def _node(cluster: Cluster, name: str):
@@ -123,6 +125,18 @@ def test_job_parsing(cluster: Cluster):
     assert pending.pending is True
     assert pending.gpus == 32  # falls back to tres_req_str when alloc is empty
     assert pending.reason == "Resources"
+
+
+def test_job_parsing_counts_typed_gpu_tres():
+    job = Job.from_squeue(
+        NestedDict(
+            job_id=1003,
+            job_state="PENDING",
+            tres_req_str="cpu=8,mem=128G,gres/gpu:a100=2,gres/gpu:h100=4",
+            tres_alloc_str="",
+        )
+    )
+    assert job.gpus == 6
 
 
 def test_running_pending_partitions(cluster: Cluster):

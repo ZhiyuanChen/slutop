@@ -60,7 +60,9 @@ def build_config(argv: list[str] | None = None) -> Config:
     return Config(**vars(args))
 
 
-def _filter_jobs(cluster: Cluster, user: str | None, partition: str | None) -> Cluster:
+def _filter_cluster(cluster: Cluster, user: str | None, partition: str | None) -> Cluster:
+    if partition:
+        cluster.nodes = [n for n in cluster.nodes if partition in n.partitions]
     jobs = cluster.jobs
     if user:
         jobs = [j for j in jobs if j.user == user]
@@ -96,7 +98,7 @@ def _now() -> str:
 
 
 def _collect(source: Source, config: Config, user: str | None) -> Cluster:
-    return _filter_jobs(snapshot(source), user, config.partition)
+    return _filter_cluster(snapshot(source), user, config.partition)
 
 
 @contextlib.contextmanager

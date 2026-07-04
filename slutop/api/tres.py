@@ -52,7 +52,9 @@ def parse_tres(spec: str | None) -> FlatDict:
     """Parse a TRES string into a :class:`~chanfig.FlatDict`.
 
     ``gres/<name>`` keys are flattened to ``<name>`` (so ``gres/gpu`` becomes ``gpu``),
-    memory is normalised to MiB, and counts are coerced to ``int`` where possible.
+    typed GRES keys also aggregate under their base name (so ``gres/gpu:a100``
+    contributes to ``gpu``), memory is normalised to MiB, and counts are coerced
+    to ``int`` where possible.
     """
     tres: FlatDict = FlatDict()
     if not spec:
@@ -63,18 +65,30 @@ def parse_tres(spec: str | None) -> FlatDict:
             continue
         key, _, raw = item.partition("=")
         key = key.strip()
+        is_gres = key.startswith("gres/")
         if key.startswith("gres/"):
             key = key[len("gres/") :]
         if key == "mem":
             tres[key] = parse_mem(raw)
             continue
+        value: int | float | str
         try:
-            tres[key] = int(raw)
+            value = int(raw)
         except ValueError:
             try:
-                tres[key] = float(raw)
+                value = float(raw)
             except ValueError:
-                tres[key] = raw
+                value = raw
+        if is_gres:
+            if ":" in key:
+                tres[key] = value
+            base = key.split(":", 1)[0]
+            if isinstance(value, (int, float)):
+                tres[base] = tres.get(base, 0) + value
+            elif base not in tres:
+                tres[base] = value
+        else:
+            tres[key] = value
     return tres
 
 

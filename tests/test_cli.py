@@ -1,7 +1,7 @@
 import io
 
 from slutop.api import Cluster
-from slutop.cli import _key_reader, _payload, build_config
+from slutop.cli import _filter_cluster, _key_reader, _payload, build_config
 
 
 def test_build_config_parses_flags():
@@ -26,6 +26,15 @@ def test_payload_summary_and_serialisation(cluster: Cluster):
     assert payload["summary"]["gpus_free"] == 11
     assert len(payload["nodes"]) == 4
     assert "summary" in payload.jsons()  # chanfig JSON serialisation
+
+
+def test_filter_cluster_restricts_nodes_jobs_and_summary(cluster: Cluster):
+    filtered = _filter_cluster(cluster, user=None, partition="debug")
+    payload = _payload(filtered)
+    assert [n.name for n in filtered.nodes] == ["node3"]
+    assert filtered.jobs == []
+    assert payload["summary"]["gpus_total"] == 8
+    assert payload["summary"]["gpus_free"] == 8
 
 
 def test_key_reader_non_tty_waits_and_returns_empty():
