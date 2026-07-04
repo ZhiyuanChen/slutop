@@ -26,7 +26,11 @@ from __future__ import annotations
 import argparse
 import contextlib
 import getpass
+import select
+import sys
+import termios
 import time
+import tty
 from dataclasses import asdict
 from datetime import datetime
 
@@ -95,20 +99,55 @@ def _collect(source: Source, config: Config, user: str | None) -> Cluster:
     return _filter_jobs(snapshot(source), user, config.partition)
 
 
+@contextlib.contextmanager
+def _key_reader(stream=sys.stdin):
+    """Yield ``read(timeout)`` -> a single keypress, or "" if none within ``timeout``.
+
+    An interactive terminal is put in cbreak mode so keys register without Enter;
+    a non-tty (piped output) just waits, leaving the refresh pacing unchanged.
+    """
+    if not stream.isatty():
+
+        def read_idle(timeout: float) -> str:
+            time.sleep(timeout)
+            return ""
+
+        yield read_idle
+        return
+
+    fd = stream.fileno()
+    saved = termios.tcgetattr(fd)
+    tty.setcbreak(fd)
+    try:
+
+        def read_key(timeout: float) -> str:
+            ready, _, _ = select.select([stream], [], [], timeout)
+            return stream.read(1) if ready else ""
+
+        yield read_key
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+
+
 def _monitor(source: Source, config: Config, me: str | None, user: str | None) -> None:
     from rich.live import Live
 
     console = Console()
     history = History()
-    with contextlib.suppress(KeyboardInterrupt), Live(console=console, screen=True, auto_refresh=False) as live:
+    with _key_reader() as read_key, Live(console=console, screen=True, auto_refresh=False) as live:
         while True:
-            cluster = _collect(source, config, user)
-            history.update(cluster)
-            live.update(
-                build_view(cluster, me=me, partition=config.partition, timestamp=_now(), history=history),
-                refresh=True,
-            )
-            time.sleep(config.interval)
+            try:
+                cluster = _collect(source, config, user)
+                history.update(cluster)
+                live.update(
+                    build_view(cluster, me=me, partition=config.partition, timestamp=_now(), history=history),
+                    refresh=True,
+                )
+                key = read_key(config.interval)
+            except KeyboardInterrupt:  # Ctrl-C
+                break
+            if key.lower() == "q":
+                break
 
 
 def main(argv: list[str] | None = None) -> int:
