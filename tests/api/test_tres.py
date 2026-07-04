@@ -19,6 +19,13 @@ def test_parse_tres_flattens_gres_and_normalises_mem():
     assert tres["billing"] == 128
 
 
+def test_parse_tres_aggregates_typed_gres():
+    tres = parse_tres("cpu=8,gres/gpu:a100=2,gres/gpu:h100=4")
+    assert tres["gpu"] == 6
+    assert tres["gpu:a100"] == 2
+    assert tres["gpu:h100"] == 4
+
+
 def test_parse_tres_empty():
     assert dict(parse_tres("")) == {}
     assert dict(parse_tres(None)) == {}
