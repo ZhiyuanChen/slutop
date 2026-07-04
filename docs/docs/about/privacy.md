@@ -175,7 +175,7 @@ As such, we may rely on the following legal bases to process your personal infor
 - **Consent.**
   We may process your personal information if you have given us specific consent to use your personal information for a specific purpose.
   You have the right to withdraw your consent at any time.
-  Learn more about [withdrawing your consents]().
+  Learn more about [withdrawing your consents](<>).
 - **Legitimate Interests.**
   We may process your information when we believe it is reasonably necessary to achieve our legitimate business interests and those interests do not outweigh your interests and fundamental rights and freedoms.
   For example, we may process your personal information for some of the purposes described in order to:

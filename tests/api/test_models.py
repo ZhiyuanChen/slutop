@@ -1,5 +1,5 @@
-from slutop.api import Cluster
-from slutop.api.models import _state_str, _unwrap
+from slutop.api import Cluster, models
+from slutop.api.models import _state_str, _unwrap, _username
 
 
 def _node(cluster: Cluster, name: str):
@@ -22,6 +22,17 @@ def test_state_str_handles_list_and_string():
     assert _state_str(["DOWN", "DRAIN"]) == "DOWN DRAIN"
     assert _state_str("mixed") == "mixed"  # v0.0.37 single string
     assert _state_str(None) == ""
+
+
+def test_username_resolution(monkeypatch, fake_pwd):
+    # squeue --json (21.08) leaves user_name empty but reports user_id; resolve it
+    # the same way squeue itself does (via the local user database).
+    monkeypatch.setattr(models, "_UID_NAMES", {})
+    monkeypatch.setattr(models, "pwd", fake_pwd({2099: "yuanle"}))
+    assert _username("alice", 0) == "alice"  # reported name wins
+    assert _username("", 2099) == "yuanle"  # resolved from uid
+    assert _username("", 4242) == "4242"  # unresolvable -> bare uid, never lost
+    assert _username("", None) == ""  # nothing to resolve
 
 
 def test_v44_node_parsing(cluster_v44: Cluster):

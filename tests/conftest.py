@@ -47,3 +47,19 @@ def squeue_v44_text() -> str:
 def cluster_v44(nodes_v44_text: str, squeue_v44_text: str) -> Cluster:
     source = JsonSource(nodes_v44_text, squeue_v44_text)
     return Cluster(nodes=source.nodes(), jobs=source.jobs())
+
+
+@pytest.fixture
+def fake_pwd():
+    """Factory for a stand-in ``pwd`` module mapping uid -> name (unknown uids raise KeyError)."""
+
+    class FakePwd:
+        def __init__(self, mapping: dict[int, str]) -> None:
+            self._mapping = mapping
+
+        def getpwuid(self, uid: int):
+            if uid in self._mapping:
+                return type("PwEntry", (), {"pw_name": self._mapping[uid]})()
+            raise KeyError(uid)
+
+    return FakePwd
