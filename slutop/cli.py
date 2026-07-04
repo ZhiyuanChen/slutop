@@ -172,6 +172,7 @@ def _monitor(source: Source, config: Config, me: str | None, user: str | None) -
                             partition=config.partition,
                             timestamp=_now(),
                             history=history,
+                            status=collector.status,
                         ),
                         refresh=True,
                     )

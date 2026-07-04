@@ -31,6 +31,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from ..api.collector import PollStatus
 from ..api.history import History
 from ..api.models import Cluster, Job, Node
 from . import theme as t
@@ -61,6 +62,18 @@ def fmt_duration(seconds: int) -> str:
     if hours:
         return f"{hours}h{minutes:02d}m"
     return f"{minutes}m"
+
+
+def fmt_age(seconds: float) -> str:
+    """Compact age label for freshness indicators."""
+    seconds = max(int(seconds), 0)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m{seconds:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m"
 
 
 def sparkline(values: Sequence[float], width: int = SPARK_WIDTH, vmax: float = 100.0) -> Text:
@@ -123,7 +136,35 @@ def cluster_gauge(used: float, free: float, unavailable: float, width: int = 24)
     )
 
 
-def summary_panel(cluster: Cluster, timestamp: str | None = None, history: History | None = None) -> Panel:
+def status_line(status: PollStatus | None) -> Text:
+    """Render polling freshness/error state for the summary header."""
+    if status is None:
+        return Text("")
+    parts: list[tuple[str, str]] = []
+    if status.jobs_stale:
+        parts.append((f"jobs stale {fmt_age(status.jobs_age)}", t.WARNING))
+    if status.nodes_stale:
+        parts.append((f"nodes stale {fmt_age(status.nodes_age)}", t.WARNING))
+    elif status.nodes_age >= 1:
+        parts.append((f"nodes {fmt_age(status.nodes_age)} old", t.MUTED))
+    if status.error:
+        parts.append((status.error, t.DANGER))
+    if not parts:
+        return Text("")
+    text = Text()
+    for index, (part, style) in enumerate(parts):
+        if index:
+            text.append("  ·  ", style=t.MUTED)
+        text.append(part, style=style)
+    return text
+
+
+def summary_panel(
+    cluster: Cluster,
+    timestamp: str | None = None,
+    history: History | None = None,
+    status: PollStatus | None = None,
+) -> Panel:
     running = len(cluster.running_jobs)
     pending = len(cluster.pending_jobs)
 
@@ -173,8 +214,15 @@ def summary_panel(cluster: Cluster, timestamp: str | None = None, history: Histo
         "",
     )
     content: RenderableType = grid
-    if timestamp:
-        content = Group(Text(timestamp, justify="right", style=t.MUTED), grid)
+    header = Text(timestamp or "", justify="right", style=t.MUTED)
+    status_text = status_line(status)
+    if status_text.plain:
+        if timestamp:
+            header = Text.assemble((timestamp, t.MUTED), "  ", status_text, justify="right")
+        else:
+            header = Text.assemble(status_text, justify="right")
+    if timestamp or status_text.plain:
+        content = Group(header, grid)
     return Panel(
         content,
         title=Text("slutop", style=f"bold {t.PRIMARY}"),
@@ -283,13 +331,14 @@ def build_view(
     partition: str | None = None,
     timestamp: str | None = None,
     history: History | None = None,
+    status: PollStatus | None = None,
 ) -> RenderableType:
     """Build the full snapshot renderable (summary + nodes + jobs).
 
     Blocks are separated by a single blank line for an even vertical rhythm.
     """
     return Group(
-        summary_panel(cluster, timestamp=timestamp, history=history),
+        summary_panel(cluster, timestamp=timestamp, history=history, status=status),
         Text(""),
         node_table(cluster, partition=partition),
         Text(""),
