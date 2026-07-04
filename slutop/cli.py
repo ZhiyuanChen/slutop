@@ -24,35 +24,25 @@ through chanfig.
 from __future__ import annotations
 
 import argparse
-import contextlib
 import getpass
-import select
-import sys
-import termios
-import time
-import tty
 from dataclasses import asdict
 from datetime import datetime
 
 from chanfig import Config, NestedDict
-from rich.console import Console
 
 from . import __version__
 from .api import (
     ACTIVE_REFRESH_INTERVAL,
     IDLE_REFRESH_INTERVAL,
     NODE_REFRESH_INTERVAL,
-    CachedCollector,
     CliSource,
     Cluster,
-    History,
     Source,
     filter_cluster,
     snapshot,
 )
-from .tui.render import build_view, render_snapshot
-
-INPUT_TICK_INTERVAL = 0.25
+from .tui.render import render_snapshot
+from .tui.textual_app import run_textual_monitor
 
 
 def build_config(argv: list[str] | None = None) -> Config:
@@ -121,72 +111,16 @@ def _collect(source: Source, config: Config, user: str | None) -> Cluster:
     return filter_cluster(snapshot(source), user, config.partition)
 
 
-@contextlib.contextmanager
-def _key_reader(stream=sys.stdin):
-    """Yield ``read(timeout)`` -> a single keypress, or "" if none within ``timeout``.
-
-    An interactive terminal is put in cbreak mode so keys register without Enter;
-    a non-tty (piped output) just waits, leaving the refresh pacing unchanged.
-    """
-    if not stream.isatty():
-
-        def read_idle(timeout: float) -> str:
-            time.sleep(timeout)
-            return ""
-
-        yield read_idle
-        return
-
-    fd = stream.fileno()
-    saved = termios.tcgetattr(fd)
-    tty.setcbreak(fd)
-    try:
-
-        def read_key(timeout: float) -> str:
-            ready, _, _ = select.select([stream], [], [], timeout)
-            return stream.read(1) if ready else ""
-
-        yield read_key
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
-
-
 def _monitor(source: Source, config: Config, me: str | None, user: str | None) -> None:
-    from rich.live import Live
-
-    console = Console()
-    history = History()
-    collector = CachedCollector(source, config.node_interval)
-    next_collect = 0.0
-    with _key_reader() as read_key, Live(console=console, screen=True, auto_refresh=False) as live:
-        while True:
-            try:
-                now = time.monotonic()
-                if now >= next_collect:
-                    cluster = collector.collect(user, config.partition)
-                    history.update(cluster)
-                    live.update(
-                        build_view(
-                            cluster,
-                            me=me,
-                            partition=config.partition,
-                            timestamp=_now(),
-                            history=history,
-                            status=collector.status,
-                        ),
-                        refresh=True,
-                    )
-                    next_collect = time.monotonic() + collector.next_interval(
-                        config.interval,
-                        config.idle_interval,
-                        cluster,
-                    )
-                timeout = min(INPUT_TICK_INTERVAL, max(next_collect - time.monotonic(), 0.0))
-                key = read_key(timeout)
-            except KeyboardInterrupt:  # Ctrl-C
-                break
-            if key.lower() == "q":
-                break
+    run_textual_monitor(
+        source,
+        active_interval=config.interval,
+        idle_interval=config.idle_interval,
+        node_interval=config.node_interval,
+        me=me,
+        user=user,
+        partition=config.partition,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

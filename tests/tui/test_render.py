@@ -3,7 +3,7 @@ import io
 from rich.console import Console
 
 from slutop.api import Cluster, History, PollStatus
-from slutop.tui.render import build_view, fmt_age, fmt_duration, fmt_mem, sparkline
+from slutop.tui.render import build_view, expand_nodelist, fmt_age, fmt_duration, fmt_mem, sparkline
 
 
 def test_fmt_mem():
@@ -24,6 +24,11 @@ def test_fmt_age():
     assert fmt_age(3700) == "1h01m"
 
 
+def test_expand_nodelist():
+    assert expand_nodelist("node[1-2],gpu007") == ["node1", "node2", "gpu007"]
+    assert expand_nodelist("node[001-002,010]") == ["node001", "node002", "node010"]
+
+
 def test_sparkline_levels():
     line = sparkline([0, 50, 100], vmax=100).plain
     assert len(line) == 3
@@ -37,11 +42,15 @@ def test_sparkline_empty():
 
 def test_build_view_renders_without_error(cluster: Cluster):
     console = Console(file=io.StringIO(), width=120)
-    console.print(build_view(cluster, me="someone", partition="gpu", timestamp="2026-06-23 14:30:05"))
+    console.print(build_view(cluster, me="yuanle", partition="gpu", timestamp="2026-06-23 14:30:05"))
     out = console.file.getvalue()
     assert "slutop" in out
     assert "node1" in out
     assert "2026-06-23 14:30:05" in out  # timestamp shown top-right
+    assert "pending reasons" in out
+    assert "soon free" in out
+    assert "my jobs" in out
+    assert "#1001" in out  # node job/user overlay
 
 
 def test_build_view_with_history_shows_sparkline(json_source):

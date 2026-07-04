@@ -1,7 +1,5 @@
-import io
-
 from slutop.api import Cluster
-from slutop.cli import _key_reader, _payload, build_config
+from slutop.cli import _monitor, _payload, build_config
 
 
 def test_build_config_parses_flags():
@@ -32,7 +30,26 @@ def test_payload_summary_and_serialisation(cluster: Cluster):
     assert "summary" in payload.jsons()  # chanfig JSON serialisation
 
 
-def test_key_reader_non_tty_waits_and_returns_empty():
-    # A non-tty stream (piped output) must not touch termios; it just paces.
-    with _key_reader(io.StringIO()) as read_key:
-        assert read_key(0) == ""
+def test_monitor_runs_textual(monkeypatch):
+    calls = []
+
+    def fake_run_textual_monitor(source, **kwargs):
+        calls.append((source, kwargs))
+
+    monkeypatch.setattr("slutop.cli.run_textual_monitor", fake_run_textual_monitor)
+    source = object()
+    config = build_config(["-i", "3", "--idle-interval", "8", "--node-interval", "21", "-p", "gpu"])
+    _monitor(source, config, me="alice", user="alice")
+    assert calls == [
+        (
+            source,
+            {
+                "active_interval": 3.0,
+                "idle_interval": 8.0,
+                "node_interval": 21.0,
+                "me": "alice",
+                "user": "alice",
+                "partition": "gpu",
+            },
+        )
+    ]

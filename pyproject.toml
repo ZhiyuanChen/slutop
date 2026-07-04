@@ -23,7 +23,7 @@ maintainers = [
 authors = [
   { name = "Zhiyuan Chen", email = "this@zyc.ai" },
 ]
-requires-python = ">3.7"
+requires-python = ">=3.9"
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Intended Audience :: Developers",
@@ -32,7 +32,6 @@ classifiers = [
   "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.8",
   "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
@@ -47,6 +46,7 @@ dynamic = [
 dependencies = [
   "chanfig",
   "rich",
+  "textual",
 ]
 urls.documentation = "https://slutop.danling.org"
 urls.homepage = "https://slutop.danling.org"

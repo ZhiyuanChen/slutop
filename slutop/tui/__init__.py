@@ -14,8 +14,9 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""slutop's terminal UI (Rich-based for now; may graduate to Textual)."""
+"""slutop's terminal UI."""
 
 from .render import build_view, render_snapshot
+from .textual_app import SlutopApp, run_textual_monitor
 
-__all__ = ["build_view", "render_snapshot"]
+__all__ = ["SlutopApp", "build_view", "render_snapshot", "run_textual_monitor"]

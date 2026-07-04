@@ -23,7 +23,9 @@ and the current user's jobs surfaced. Colors follow the semantic roles in
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
+from datetime import datetime
 
 from rich import box
 from rich.console import Console, Group, RenderableType
@@ -39,6 +41,7 @@ from . import theme as t
 BAR_WIDTH = 8
 SPARK_WIDTH = 24
 _SPARK_LEVELS = "▁▂▃▄▅▆▇█"
+_NODESET_RE = re.compile(r"(?P<prefix>[^\[,]+)\[(?P<body>[^\]]+)\]")
 
 
 def fmt_mem(mib: float) -> str:
@@ -74,6 +77,67 @@ def fmt_age(seconds: float) -> str:
         return f"{minutes}m{seconds:02d}s"
     hours, minutes = divmod(minutes, 60)
     return f"{hours}h{minutes:02d}m"
+
+
+def fmt_time(epoch: int | None, now: int | None = None) -> str:
+    """Compact wall-clock or relative time for Slurm epoch fields."""
+    if not epoch:
+        return ""
+    now = int(datetime.now().timestamp()) if now is None else now
+    delta = epoch - now
+    if delta >= 0:
+        return f"in {fmt_duration(delta)}"
+    return f"{fmt_duration(-delta)} ago"
+
+
+def _split_nodelist(nodes: str) -> list[str]:
+    parts: list[str] = []
+    start = 0
+    depth = 0
+    for index, char in enumerate(nodes):
+        if char == "[":
+            depth += 1
+        elif char == "]":
+            depth = max(depth - 1, 0)
+        elif char == "," and depth == 0:
+            parts.append(nodes[start:index])
+            start = index + 1
+    parts.append(nodes[start:])
+    return parts
+
+
+def expand_nodelist(nodes: str) -> list[str]:
+    """Expand common Slurm nodelist expressions like ``node[001-003,007]``."""
+    if not nodes:
+        return []
+    expanded: list[str] = []
+    for item in _split_nodelist(nodes):
+        item = item.strip()
+        if not item:
+            continue
+        match = _NODESET_RE.fullmatch(item)
+        if match is None:
+            expanded.append(item)
+            continue
+        prefix = match.group("prefix")
+        for part in match.group("body").split(","):
+            if "-" in part:
+                start, end = part.split("-", 1)
+                width = max(len(start), len(end))
+                for index in range(int(start), int(end) + 1):
+                    expanded.append(f"{prefix}{index:0{width}d}")
+            else:
+                expanded.append(f"{prefix}{part}")
+    return expanded
+
+
+def node_jobs(cluster: Cluster) -> dict[str, list[Job]]:
+    """Map node names to running jobs, using the job nodelist expression."""
+    jobs_by_node: dict[str, list[Job]] = {}
+    for job in cluster.running_jobs:
+        for node in expand_nodelist(job.nodes):
+            jobs_by_node.setdefault(node, []).append(job)
+    return jobs_by_node
 
 
 def sparkline(values: Sequence[float], width: int = SPARK_WIDTH, vmax: float = 100.0) -> Text:
@@ -238,6 +302,7 @@ def node_table(cluster: Cluster, partition: str | None = None) -> Table:
         nodes = [n for n in nodes if partition in n.partitions]
     # Group by partition, then free GPUs first within each; unusable nodes sink.
     nodes = sorted(nodes, key=lambda n: (",".join(n.partitions), not n.usable, -n.gpus_free, n.name))
+    jobs_by_node = node_jobs(cluster)
 
     table = Table(
         box=box.SIMPLE_HEAVY,
@@ -252,8 +317,13 @@ def node_table(cluster: Cluster, partition: str | None = None) -> Table:
     table.add_column("GPU")
     table.add_column("CPU")
     table.add_column("MEM")
+    table.add_column("JOBS")
     for node in nodes:
         style = _node_style(node)
+        jobs = jobs_by_node.get(node.name, [])
+        job_text = ", ".join(f"{job.user or '?'}#{job.job_id}" for job in jobs[:3])
+        if len(jobs) > 3:
+            job_text += f" +{len(jobs) - 3}"
         table.add_row(
             ",".join(node.partitions),
             Text(node.name, style=style),
@@ -271,6 +341,7 @@ def node_table(cluster: Cluster, partition: str | None = None) -> Table:
                 node.mem_free > 0,
                 node.usable,
             ),
+            Text(job_text, style=t.ACCENT if jobs else t.MUTED),
         )
     return table
 
@@ -325,6 +396,109 @@ def jobs_table(cluster: Cluster, me: str | None = None, limit: int = 15) -> Tabl
     return table
 
 
+def my_jobs_table(cluster: Cluster, me: str | None, limit: int = 12) -> Panel:
+    """Jobs owned by the current user, split by running/pending state through sorting."""
+    table = jobs_table(
+        Cluster(nodes=cluster.nodes, jobs=[job for job in cluster.jobs if me and job.user == me]), me=me, limit=limit
+    )
+    return Panel(
+        table,
+        title=Text("my jobs", style=f"bold {t.ACCENT}"),
+        title_align="left",
+        border_style=t.BORDER,
+        box=box.ROUNDED,
+    )
+
+
+def pending_reasons_panel(cluster: Cluster) -> Panel:
+    """Aggregate pending jobs by Slurm reason."""
+    reasons: dict[str, tuple[int, int, set[str]]] = {}
+    for job in cluster.pending_jobs:
+        reason = job.reason if job.reason not in ("", "None") else "unknown"
+        count, gpus, users = reasons.get(reason, (0, 0, set()))
+        users.add(job.user or "?")
+        reasons[reason] = (count + 1, gpus + job.gpus, users)
+
+    table = Table(
+        box=box.SIMPLE_HEAVY,
+        header_style=f"bold {t.PRIMARY}",
+        border_style=t.BORDER,
+        show_edge=False,
+        expand=True,
+    )
+    table.add_column("REASON")
+    table.add_column("JOBS", justify="right")
+    table.add_column("GPU", justify="right")
+    table.add_column("USERS")
+    for reason, (count, gpus, users) in sorted(reasons.items(), key=lambda item: (-item[1][0], item[0])):
+        table.add_row(reason, str(count), str(gpus), ", ".join(sorted(users)[:5]))
+    if not reasons:
+        table.add_row(Text("no pending jobs", style=t.MUTED), "", "", "")
+    return Panel(
+        table,
+        title=Text("pending reasons", style=f"bold {t.WARNING}"),
+        title_align="left",
+        border_style=t.BORDER,
+        box=box.ROUNDED,
+    )
+
+
+def soon_free_panel(cluster: Cluster, limit: int = 8, now: int | None = None) -> Panel:
+    """Running jobs ordered by expected end time."""
+    jobs = sorted(
+        (job for job in cluster.running_jobs if job.end_time), key=lambda job: (job.end_time or 0, job.job_id)
+    )
+    table = Table(
+        box=box.SIMPLE_HEAVY,
+        header_style=f"bold {t.PRIMARY}",
+        border_style=t.BORDER,
+        show_edge=False,
+        expand=True,
+    )
+    table.add_column("FREE IN")
+    table.add_column("JOBID", justify="right")
+    table.add_column("USER")
+    table.add_column("PART")
+    table.add_column("GPU", justify="right")
+    table.add_column("NODES")
+    for job in jobs[:limit]:
+        table.add_row(
+            fmt_time(job.end_time, now=now), str(job.job_id), job.user or "?", job.partition, str(job.gpus), job.nodes
+        )
+    if not jobs:
+        table.add_row(Text("no running jobs with end times", style=t.MUTED), "", "", "", "", "")
+    elif len(jobs) > limit:
+        table.caption = f"… and {len(jobs) - limit} more"
+        table.caption_style = t.MUTED
+    return Panel(
+        table,
+        title=Text("soon free", style=f"bold {t.INFO}"),
+        title_align="left",
+        border_style=t.BORDER,
+        box=box.ROUNDED,
+    )
+
+
+def jobs_panel(cluster: Cluster, me: str | None = None) -> Panel:
+    return Panel(
+        jobs_table(cluster, me=me),
+        title=Text("jobs", style=f"bold {t.PRIMARY}"),
+        title_align="left",
+        border_style=t.BORDER,
+        box=box.ROUNDED,
+    )
+
+
+def nodes_panel(cluster: Cluster, partition: str | None = None) -> Panel:
+    return Panel(
+        node_table(cluster, partition=partition),
+        title=Text("nodes", style=f"bold {t.PRIMARY}"),
+        title_align="left",
+        border_style=t.BORDER,
+        box=box.ROUNDED,
+    )
+
+
 def build_view(
     cluster: Cluster,
     me: str | None = None,
@@ -340,9 +514,15 @@ def build_view(
     return Group(
         summary_panel(cluster, timestamp=timestamp, history=history, status=status),
         Text(""),
-        node_table(cluster, partition=partition),
+        nodes_panel(cluster, partition=partition),
         Text(""),
-        jobs_table(cluster, me=me),
+        pending_reasons_panel(cluster),
+        Text(""),
+        soon_free_panel(cluster),
+        Text(""),
+        my_jobs_table(cluster, me=me),
+        Text(""),
+        jobs_panel(cluster, me=me),
     )
 
 
