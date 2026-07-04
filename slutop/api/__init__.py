@@ -23,8 +23,10 @@ scripts and dashboards independently of the terminal monitor.
 from .collector import (
     ACTIVE_REFRESH_INTERVAL,
     IDLE_REFRESH_INTERVAL,
+    JOB_CHANGE_NODE_REFRESH_INTERVAL,
     NODE_REFRESH_INTERVAL,
     CachedCollector,
+    PollStatus,
     filter_cluster,
 )
 from .history import History
@@ -41,9 +43,11 @@ __all__ = [
     "History",
     "IDLE_REFRESH_INTERVAL",
     "Job",
+    "JOB_CHANGE_NODE_REFRESH_INTERVAL",
     "JsonSource",
     "NODE_REFRESH_INTERVAL",
     "Node",
+    "PollStatus",
     "Source",
     "filter_cluster",
     "parse_gres",
