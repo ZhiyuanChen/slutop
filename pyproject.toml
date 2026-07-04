@@ -46,6 +46,7 @@ dynamic = [
 dependencies = [
   "chanfig",
   "rich",
+  "textual",
 ]
 urls.documentation = "https://slutop.danling.org"
 urls.homepage = "https://slutop.danling.org"
