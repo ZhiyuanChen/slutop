@@ -38,8 +38,14 @@ from chanfig import Config, NestedDict
 from rich.console import Console
 
 from . import __version__
-from .api import CliSource, Cluster, History, Source, snapshot
+from .api import CliSource, Cluster, History, Node, Source, snapshot
 from .tui.render import build_view, render_snapshot
+
+ACTIVE_REFRESH_INTERVAL = 2.0
+IDLE_REFRESH_INTERVAL = 5.0
+NODE_REFRESH_INTERVAL = 30.0
+MIN_REFRESH_INTERVAL = 0.1
+INPUT_TICK_INTERVAL = 0.25
 
 
 def build_config(argv: list[str] | None = None) -> Config:
@@ -52,7 +58,26 @@ def build_config(argv: list[str] | None = None) -> Config:
     parser.add_argument("--me", action="store_true", help="only show your own jobs")
     parser.add_argument("-p", "--partition", metavar="PART", help="restrict to a partition")
     parser.add_argument(
-        "-i", "--interval", type=float, default=5.0, metavar="SEC", help="refresh interval (monitor mode)"
+        "-i",
+        "--interval",
+        type=float,
+        default=ACTIVE_REFRESH_INTERVAL,
+        metavar="SEC",
+        help="active refresh interval (monitor mode)",
+    )
+    parser.add_argument(
+        "--idle-interval",
+        type=float,
+        default=IDLE_REFRESH_INTERVAL,
+        metavar="SEC",
+        help="refresh interval after the queue is stable (monitor mode)",
+    )
+    parser.add_argument(
+        "--node-interval",
+        type=float,
+        default=NODE_REFRESH_INTERVAL,
+        metavar="SEC",
+        help="node refresh interval when the queue is stable (monitor mode)",
     )
     parser.add_argument("-o", "--output", choices=["table", "json"], default="table", help="output format")
     parser.add_argument("--version", action="version", version=f"slutop {__version__}")
@@ -101,6 +126,66 @@ def _collect(source: Source, config: Config, user: str | None) -> Cluster:
     return _filter_cluster(snapshot(source), user, config.partition)
 
 
+def _job_signature(cluster: Cluster) -> tuple:
+    return tuple(
+        (
+            job.job_id,
+            job.partition,
+            job.state,
+            job.reason,
+            job.nodes,
+            job.node_count,
+            job.cpus,
+            job.gpus,
+            job.start_time,
+            job.end_time,
+        )
+        for job in sorted(cluster.jobs, key=lambda j: j.job_id)
+    )
+
+
+def _bounded_interval(value: float, minimum: float = MIN_REFRESH_INTERVAL) -> float:
+    return max(float(value), minimum)
+
+
+class CachedCollector:
+    """Collect jobs frequently while caching node snapshots between slower refreshes."""
+
+    def __init__(self, source: Source, node_interval: float, clock=time.monotonic) -> None:
+        self.source = source
+        self.node_interval = _bounded_interval(node_interval)
+        self.clock = clock
+        self._nodes: list[Node] | None = None
+        self._nodes_at = float("-inf")
+        self._signature: tuple | None = None
+        self.stable_refreshes = 0
+        self.changed = True
+
+    def collect(self, config: Config, user: str | None) -> Cluster:
+        now = self.clock()
+        jobs = self.source.jobs()
+        cluster = Cluster(nodes=[], jobs=jobs)
+        signature = _job_signature(cluster)
+        self.changed = signature != self._signature
+        self.stable_refreshes = 0 if self.changed else self.stable_refreshes + 1
+        self._signature = signature
+
+        nodes_due = self._nodes is None or self.changed or now - self._nodes_at >= self.node_interval
+        if nodes_due:
+            self._nodes = self.source.nodes()
+            self._nodes_at = now
+
+        assert self._nodes is not None
+        return _filter_cluster(Cluster(nodes=list(self._nodes), jobs=jobs), user, config.partition)
+
+    def next_interval(self, config: Config, cluster: Cluster) -> float:
+        active = _bounded_interval(config.interval)
+        idle = max(active, _bounded_interval(config.idle_interval))
+        if self.changed or cluster.pending_jobs or self.stable_refreshes < 2:
+            return active
+        return idle
+
+
 @contextlib.contextmanager
 def _key_reader(stream=sys.stdin):
     """Yield ``read(timeout)`` -> a single keypress, or "" if none within ``timeout``.
@@ -136,16 +221,22 @@ def _monitor(source: Source, config: Config, me: str | None, user: str | None) -
 
     console = Console()
     history = History()
+    collector = CachedCollector(source, config.node_interval)
+    next_collect = 0.0
     with _key_reader() as read_key, Live(console=console, screen=True, auto_refresh=False) as live:
         while True:
             try:
-                cluster = _collect(source, config, user)
-                history.update(cluster)
-                live.update(
-                    build_view(cluster, me=me, partition=config.partition, timestamp=_now(), history=history),
-                    refresh=True,
-                )
-                key = read_key(config.interval)
+                now = time.monotonic()
+                if now >= next_collect:
+                    cluster = collector.collect(config, user)
+                    history.update(cluster)
+                    live.update(
+                        build_view(cluster, me=me, partition=config.partition, timestamp=_now(), history=history),
+                        refresh=True,
+                    )
+                    next_collect = time.monotonic() + collector.next_interval(config, cluster)
+                timeout = min(INPUT_TICK_INTERVAL, max(next_collect - time.monotonic(), 0.0))
+                key = read_key(timeout)
             except KeyboardInterrupt:  # Ctrl-C
                 break
             if key.lower() == "q":
