@@ -20,6 +20,13 @@ This subpackage is UI-free and importable on its own, so it can be reused in
 scripts and dashboards independently of the terminal monitor.
 """
 
+from .collector import (
+    ACTIVE_REFRESH_INTERVAL,
+    IDLE_REFRESH_INTERVAL,
+    NODE_REFRESH_INTERVAL,
+    CachedCollector,
+    filter_cluster,
+)
 from .history import History
 from .models import Cluster, Job, Node
 from .snapshot import snapshot
@@ -29,11 +36,16 @@ from .tres import parse_gres, parse_mem, parse_tres
 __all__ = [
     "CliSource",
     "Cluster",
+    "ACTIVE_REFRESH_INTERVAL",
+    "CachedCollector",
     "History",
+    "IDLE_REFRESH_INTERVAL",
     "Job",
     "JsonSource",
+    "NODE_REFRESH_INTERVAL",
     "Node",
     "Source",
+    "filter_cluster",
     "parse_gres",
     "parse_mem",
     "parse_tres",
