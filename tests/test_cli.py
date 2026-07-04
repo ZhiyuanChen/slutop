@@ -1,5 +1,7 @@
+import io
+
 from slutop.api import Cluster
-from slutop.cli import _payload, build_config
+from slutop.cli import _key_reader, _payload, build_config
 
 
 def test_build_config_parses_flags():
@@ -24,3 +26,9 @@ def test_payload_summary_and_serialisation(cluster: Cluster):
     assert payload["summary"]["gpus_free"] == 11
     assert len(payload["nodes"]) == 4
     assert "summary" in payload.jsons()  # chanfig JSON serialisation
+
+
+def test_key_reader_non_tty_waits_and_returns_empty():
+    # A non-tty stream (piped output) must not touch termios; it just paces.
+    with _key_reader(io.StringIO()) as read_key:
+        assert read_key(0) == ""
