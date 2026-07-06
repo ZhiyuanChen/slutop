@@ -26,7 +26,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
       - name: Install dependencies for testing
-        run: pip install pytest pytest-cov
+        run: pip install pytest pytest-cov pytest-asyncio anyio
       - name: Install module
         run: pip install -e .
       - name: pytest
