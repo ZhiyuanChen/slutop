@@ -22,13 +22,22 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from textual.app import App, ComposeResult
-from textual.containers import VerticalScroll
 from textual.timer import Timer
-from textual.widgets import Footer, Header, Static
+from textual.widgets import Footer, Header, Static, TabbedContent, TabPane
 from textual.worker import Worker, WorkerState
 
 from ..api import CachedCollector, Cluster, History, PollStatus, Source
-from .render import jobs_panel, my_jobs_table, nodes_panel, pending_reasons_panel, soon_free_panel, summary_panel
+from .render import (
+    jobs_panel,
+    my_jobs_table,
+    nodes_panel,
+    pending_reasons_panel,
+    soon_free_panel,
+    summary_panel,
+    users_panel,
+)
+
+PANEL_IDS = ("nodes", "users", "pending", "soon-free", "my-jobs", "jobs")
 
 
 @dataclass
@@ -54,15 +63,33 @@ class SlutopApp(App[None]):
         padding: 0 1;
     }
 
+    #panels ContentSwitcher {
+        height: 1fr;
+    }
+
+    #panels TabPane {
+        height: 1fr;
+    }
+
+    #summary {
+        margin: 0 1 1 1;
+    }
+
     Static.panel {
         width: 100%;
-        margin: 0 0 1 0;
+        height: 100%;
     }
     """
 
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("r", "refresh", "Refresh"),
+        ("1", "show_panel('nodes')", "Nodes"),
+        ("2", "show_panel('users')", "Users"),
+        ("3", "show_panel('pending')", "Pending"),
+        ("4", "show_panel('soon-free')", "Soon Free"),
+        ("5", "show_panel('my-jobs')", "My Jobs"),
+        ("6", "show_panel('jobs')", "Jobs"),
     ]
 
     def __init__(
@@ -90,13 +117,20 @@ class SlutopApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with VerticalScroll(id="panels"):
-            yield Static(id="summary", classes="panel")
-            yield Static(id="nodes", classes="panel")
-            yield Static(id="pending", classes="panel")
-            yield Static(id="soon-free", classes="panel")
-            yield Static(id="my-jobs", classes="panel")
-            yield Static(id="jobs", classes="panel")
+        yield Static(id="summary")
+        with TabbedContent(id="panels", initial="nodes"):
+            with TabPane("Nodes", id="nodes"):
+                yield Static(id="nodes-panel", classes="panel")
+            with TabPane("Users", id="users"):
+                yield Static(id="users-panel", classes="panel")
+            with TabPane("Pending", id="pending"):
+                yield Static(id="pending-panel", classes="panel")
+            with TabPane("Soon Free", id="soon-free"):
+                yield Static(id="soon-free-panel", classes="panel")
+            with TabPane("My Jobs", id="my-jobs"):
+                yield Static(id="my-jobs-panel", classes="panel")
+            with TabPane("Jobs", id="jobs"):
+                yield Static(id="jobs-panel", classes="panel")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -105,6 +139,10 @@ class SlutopApp(App[None]):
 
     def action_refresh(self) -> None:
         self._request_refresh()
+
+    def action_show_panel(self, panel_id: str) -> None:
+        if panel_id in PANEL_IDS:
+            self.query_one("#panels", TabbedContent).active = panel_id
 
     def _request_refresh(self) -> None:
         if self._timer is not None:
@@ -139,11 +177,12 @@ class SlutopApp(App[None]):
         self.query_one("#summary", Static).update(
             summary_panel(cluster, timestamp=frame.timestamp, history=self.history, status=frame.status)
         )
-        self.query_one("#nodes", Static).update(nodes_panel(cluster, partition=self.partition))
-        self.query_one("#pending", Static).update(pending_reasons_panel(cluster))
-        self.query_one("#soon-free", Static).update(soon_free_panel(cluster))
-        self.query_one("#my-jobs", Static).update(my_jobs_table(cluster, me=self.me))
-        self.query_one("#jobs", Static).update(jobs_panel(cluster, me=self.me))
+        self.query_one("#nodes-panel", Static).update(nodes_panel(cluster, partition=self.partition))
+        self.query_one("#users-panel", Static).update(users_panel(cluster))
+        self.query_one("#pending-panel", Static).update(pending_reasons_panel(cluster))
+        self.query_one("#soon-free-panel", Static).update(soon_free_panel(cluster))
+        self.query_one("#my-jobs-panel", Static).update(my_jobs_table(cluster, me=self.me))
+        self.query_one("#jobs-panel", Static).update(jobs_panel(cluster, me=self.me))
 
 
 def run_textual_monitor(

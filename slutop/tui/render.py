@@ -24,6 +24,7 @@ and the current user's jobs surfaced. Colors follow the semantic roles in
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import Sequence
 from datetime import datetime
 
@@ -39,7 +40,9 @@ from ..api.models import Cluster, Job, Node
 from . import theme as t
 
 BAR_WIDTH = 8
+NODE_JOB_DETAIL_LIMIT = 8
 SPARK_WIDTH = 24
+USER_JOB_DETAIL_LIMIT = 8
 _SPARK_LEVELS = "▁▂▃▄▅▆▇█"
 _NODESET_RE = re.compile(r"(?P<prefix>[^\[,]+)\[(?P<body>[^\]]+)\]")
 
@@ -140,6 +143,63 @@ def node_jobs(cluster: Cluster) -> dict[str, list[Job]]:
     return jobs_by_node
 
 
+def _job_state(job: Job) -> tuple[str, str]:
+    if job.running:
+        return "R", t.SUCCESS
+    if job.pending:
+        return "PD", t.WARNING
+    return job.state[:2] or "?", t.MUTED
+
+
+def _node_job_summary(jobs: Sequence[Job]) -> Text:
+    if not jobs:
+        return Text("")
+    user_counts = Counter(job.user or "?" for job in jobs)
+    users = ", ".join(
+        f"{user} x{count}" if count > 1 else user
+        for user, count in sorted(user_counts.items(), key=lambda item: item[0])
+    )
+    label = f"{len(jobs)} job{'s' if len(jobs) != 1 else ''}"
+    return Text(f"{label} · {users}", style=t.ACCENT)
+
+
+def _job_resources(job: Job) -> Text:
+    parts: list[str] = []
+    if job.gpus:
+        parts.append(f"{job.gpus} gpu")
+    if job.cpus:
+        parts.append(f"{job.cpus} cpu")
+    return Text(" · ".join(parts), style=t.MUTED)
+
+
+def _job_time(job: Job) -> Text:
+    if job.pending and job.start_time:
+        return Text(f"starts {fmt_time(job.start_time)}", style=t.MUTED)
+    if job.running and job.end_time:
+        return Text(f"ends {fmt_time(job.end_time)}", style=t.MUTED)
+    return Text("")
+
+
+def _job_label(job: Job) -> Text:
+    label = job.name
+    if not label and job.pending and job.reason not in ("", "None"):
+        label = job.reason
+    return Text(label, style=t.MUTED)
+
+
+def _job_info(job: Job) -> Text:
+    parts: list[str] = []
+    if job.name:
+        parts.append(job.name)
+    if job.pending and job.reason not in ("", "None"):
+        parts.append(job.reason)
+    if job.pending and job.start_time:
+        parts.append(f"starts {fmt_time(job.start_time)}")
+    if job.running and job.end_time:
+        parts.append(f"ends {fmt_time(job.end_time)}")
+    return Text(" · ".join(parts), style=t.MUTED)
+
+
 def sparkline(values: Sequence[float], width: int = SPARK_WIDTH, vmax: float = 100.0) -> Text:
     """Render a Unicode block sparkline of the most recent ``width`` values.
 
@@ -209,8 +269,6 @@ def status_line(status: PollStatus | None) -> Text:
         parts.append((f"jobs stale {fmt_age(status.jobs_age)}", t.WARNING))
     if status.nodes_stale:
         parts.append((f"nodes stale {fmt_age(status.nodes_age)}", t.WARNING))
-    elif status.nodes_age >= 1:
-        parts.append((f"nodes {fmt_age(status.nodes_age)} old", t.MUTED))
     if status.error:
         parts.append((status.error, t.DANGER))
     if not parts:
@@ -311,19 +369,16 @@ def node_table(cluster: Cluster, partition: str | None = None) -> Table:
         show_edge=False,
         expand=True,
     )
-    table.add_column("PART")
-    table.add_column("NODE")
-    table.add_column("STATE")
-    table.add_column("GPU")
-    table.add_column("CPU")
-    table.add_column("MEM")
-    table.add_column("JOBS")
+    table.add_column("PART", no_wrap=True)
+    table.add_column("NODE/JOB", no_wrap=True)
+    table.add_column("STATE", no_wrap=True)
+    table.add_column("GPU/USER", no_wrap=True)
+    table.add_column("CPU/REQ", no_wrap=True)
+    table.add_column("MEM/TIME", no_wrap=True)
+    table.add_column("JOBS/NAME", min_width=12, ratio=1, no_wrap=True, overflow="ellipsis")
     for node in nodes:
         style = _node_style(node)
-        jobs = jobs_by_node.get(node.name, [])
-        job_text = ", ".join(f"{job.user or '?'}#{job.job_id}" for job in jobs[:3])
-        if len(jobs) > 3:
-            job_text += f" +{len(jobs) - 3}"
+        jobs = sorted(jobs_by_node.get(node.name, []), key=lambda job: (job.user or "", job.job_id))
         table.add_row(
             ",".join(node.partitions),
             Text(node.name, style=style),
@@ -341,8 +396,120 @@ def node_table(cluster: Cluster, partition: str | None = None) -> Table:
                 node.mem_free > 0,
                 node.usable,
             ),
-            Text(job_text, style=t.ACCENT if jobs else t.MUTED),
+            _node_job_summary(jobs),
         )
+        for job in jobs[:NODE_JOB_DETAIL_LIMIT]:
+            state, state_style = _job_state(job)
+            table.add_row(
+                "",
+                Text(f"  └─ #{job.job_id}", style=t.MUTED),
+                Text(state, style=state_style),
+                Text(job.user or "?", style=t.ACCENT),
+                _job_resources(job),
+                _job_time(job),
+                _job_label(job),
+            )
+        if len(jobs) > NODE_JOB_DETAIL_LIMIT:
+            table.add_row(
+                "",
+                Text("  └─ …", style=t.MUTED),
+                "",
+                "",
+                "",
+                "",
+                Text(f"+{len(jobs) - NODE_JOB_DETAIL_LIMIT} more", style=t.MUTED),
+            )
+    return table
+
+
+def users_table(cluster: Cluster) -> Table:
+    """Aggregate jobs by user, with expandable job rows under each user."""
+    jobs_by_user: dict[str, list[Job]] = {}
+    for job in cluster.jobs:
+        jobs_by_user.setdefault(job.user or "?", []).append(job)
+
+    table = Table(
+        box=box.SIMPLE_HEAVY,
+        header_style=f"bold {t.PRIMARY}",
+        border_style=t.BORDER,
+        show_edge=False,
+        expand=True,
+    )
+    table.add_column("USER / JOB")
+    table.add_column("ST")
+    table.add_column("RUN", justify="right")
+    table.add_column("PD", justify="right")
+    table.add_column("GPU R/PD", justify="right")
+    table.add_column("CPU R/PD", justify="right")
+    table.add_column("NODES")
+    table.add_column("INFO")
+
+    def summary(jobs: Sequence[Job]) -> tuple[int, int, int, int, int, int, set[str]]:
+        running = [job for job in jobs if job.running]
+        pending = [job for job in jobs if job.pending]
+        nodes: set[str] = set()
+        for job in running:
+            nodes.update(expand_nodelist(job.nodes))
+        return (
+            len(running),
+            len(pending),
+            sum(job.gpus for job in running),
+            sum(job.gpus for job in pending),
+            sum(job.cpus for job in running),
+            sum(job.cpus for job in pending),
+            nodes,
+        )
+
+    rows = []
+    for user, jobs in jobs_by_user.items():
+        running, pending, running_gpus, pending_gpus, running_cpus, pending_cpus, nodes = summary(jobs)
+        rows.append((user, jobs, running, pending, running_gpus, pending_gpus, running_cpus, pending_cpus, nodes))
+    rows.sort(key=lambda row: (-row[4], -row[5], -row[2], -row[3], row[0]))
+
+    if not rows:
+        table.add_row(Text("no jobs", style=t.MUTED), "", "", "", "", "", "", "")
+        return table
+
+    for user, jobs, running, pending, running_gpus, pending_gpus, running_cpus, pending_cpus, nodes in rows:
+        pending_reasons = Counter(job.reason for job in jobs if job.pending and job.reason not in ("", "None"))
+        reason_text = ", ".join(
+            f"{reason} x{count}" if count > 1 else reason
+            for reason, count in sorted(pending_reasons.items(), key=lambda item: (-item[1], item[0]))[:3]
+        )
+        table.add_row(
+            Text(user, style=t.ACCENT if running else t.WARNING),
+            "",
+            str(running),
+            str(pending),
+            f"{running_gpus}/{pending_gpus}",
+            f"{running_cpus}/{pending_cpus}",
+            str(len(nodes)) if nodes else "",
+            Text(reason_text, style=t.MUTED),
+        )
+        for job in sorted(jobs, key=_job_sort_key)[:USER_JOB_DETAIL_LIMIT]:
+            state, state_style = _job_state(job)
+            where = job.nodes if job.running else str(job.node_count or "")
+            table.add_row(
+                Text(f"  └─ #{job.job_id}", style=t.MUTED),
+                Text(state, style=state_style),
+                "",
+                "",
+                str(job.gpus) if job.gpus else "",
+                str(job.cpus) if job.cpus else "",
+                where,
+                _job_info(job),
+            )
+        if len(jobs) > USER_JOB_DETAIL_LIMIT:
+            table.add_row(
+                Text("  └─ …", style=t.MUTED),
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                Text(f"+{len(jobs) - USER_JOB_DETAIL_LIMIT} more", style=t.MUTED),
+            )
     return table
 
 
@@ -499,6 +666,16 @@ def nodes_panel(cluster: Cluster, partition: str | None = None) -> Panel:
     )
 
 
+def users_panel(cluster: Cluster) -> Panel:
+    return Panel(
+        users_table(cluster),
+        title=Text("users", style=f"bold {t.ACCENT}"),
+        title_align="left",
+        border_style=t.BORDER,
+        box=box.ROUNDED,
+    )
+
+
 def build_view(
     cluster: Cluster,
     me: str | None = None,
@@ -515,6 +692,8 @@ def build_view(
         summary_panel(cluster, timestamp=timestamp, history=history, status=status),
         Text(""),
         nodes_panel(cluster, partition=partition),
+        Text(""),
+        users_panel(cluster),
         Text(""),
         pending_reasons_panel(cluster),
         Text(""),
