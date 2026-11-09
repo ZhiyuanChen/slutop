@@ -32,12 +32,14 @@ classifiers = [
   "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.8",
   "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dynamic = [
@@ -90,8 +92,8 @@ ini_options.markers = [
 ]
 
 [tool.coverage]
-run.branch = true
 run.include = [ "slutop/**" ]
+run.branch = true
 paths.source = [ "slutop" ]
 report.fail_under = 64
 report.show_missing = true
